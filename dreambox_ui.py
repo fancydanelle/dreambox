@@ -1,6 +1,8 @@
 import os
 import re
+import json
 import glob as glob_module
+import socket as _socket
 import subprocess
 import time
 import tkinter as tk
@@ -65,6 +67,37 @@ def _set_vol(v):
     except Exception:
         pass
 
+# ── MPV IPC ──────────────────────────────────────────────────────────────────
+_IPC = "/tmp/dreambox_mpv.sock"
+_paused = [False]
+
+def _mpv_cmd(*args):
+    try:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect(_IPC)
+        s.sendall(json.dumps({"command": list(args)}).encode() + b"\n")
+        s.close()
+    except Exception:
+        pass
+
+def _toggle_pause():
+    _paused[0] = not _paused[0]
+    _mpv_cmd("cycle", "pause")
+    try:
+        _play_lbl.config(text="▶" if _paused[0] else "⏸")
+    except Exception:
+        pass
+
+def _next_ep():
+    if _paused[0]:          # resume so next ep autoplays
+        _paused[0] = False
+        try:
+            _play_lbl.config(text="⏸")
+        except Exception:
+            pass
+    _mpv_cmd("playlist-next", "force")
+
 # ── ROOT WINDOW ───────────────────────────────────────────────────────────────
 SW, SH = 800, 480
 
@@ -83,63 +116,87 @@ _hide_id = [None]
 # ── PLAYING FRAME ─────────────────────────────────────────────────────────────
 playing_frame = tk.Frame(root, bg="black")
 
-# Controls bar — child of ROOT so it floats above mpv's sub-window
-_ctrl = tk.Frame(root, bg="#111111", height=130)
+# ── CONTROL BAR (child of root — floats above mpv's sub-window) ───────────────
+CTRL_H = 80   # height of the bottom bar in pixels
 
-# Stop button (left)
-_stop_lbl = tk.Label(
-    _ctrl, text="  ✕  STOP  ",
-    font=("Helvetica", 32, "bold"),
-    fg="white", bg="#cc2222",
-    padx=16, pady=20,
-)
-_stop_lbl.pack(side="left", padx=16, pady=12)
+_ctrl = tk.Frame(root, bg="#1c1c1c")
 
-# Volume controls (right side: − VOL% +)
-_vol_up = tk.Label(
-    _ctrl, text="  +  ",
-    font=("Helvetica", 40, "bold"),
-    fg="white", bg="#2a6a2a",
-    padx=18, pady=20,
+# ── left group: play/pause  next ─────────────────────────────────────────────
+_play_lbl = tk.Label(
+    _ctrl, text="⏸",
+    font=("Helvetica", 34),
+    fg="white", bg="#1c1c1c",
+    padx=20, pady=10,
 )
+_play_lbl.pack(side="left", padx=(10, 2))
+
+_next_lbl = tk.Label(
+    _ctrl, text="⏭",
+    font=("Helvetica", 34),
+    fg="white", bg="#1c1c1c",
+    padx=16, pady=10,
+)
+_next_lbl.pack(side="left", padx=(2, 10))
+
+# ── right group: vol−  vol%  vol+  ✕ ─────────────────────────────────────────
+_exit_lbl = tk.Label(
+    _ctrl, text=" ✕ ",
+    font=("Helvetica", 28, "bold"),
+    fg="white", bg="#992222",
+    padx=14, pady=10,
+)
+_exit_lbl.pack(side="right", padx=(2, 10))
+
+_vol_up_lbl = tk.Label(
+    _ctrl, text=" + ",
+    font=("Helvetica", 30, "bold"),
+    fg="white", bg="#1c1c1c",
+    padx=14, pady=10,
+)
+_vol_up_lbl.pack(side="right", padx=2)
+
 _vol_lbl = tk.Label(
     _ctrl, text=f"{_vol[0]}%",
-    font=("Helvetica", 28),
-    fg="white", bg="#111111",
+    font=("Helvetica", 22),
+    fg="#bbbbbb", bg="#1c1c1c",
     width=5,
 )
-_vol_dn = tk.Label(
-    _ctrl, text="  −  ",
-    font=("Helvetica", 40, "bold"),
-    fg="white", bg="#6a2a2a",
-    padx=18, pady=20,
-)
-_vol_up.pack(side="right", padx=(0, 16), pady=12)
-_vol_lbl.pack(side="right", pady=12)
-_vol_dn.pack(side="right", pady=12)
+_vol_lbl.pack(side="right")
 
-CTRL_H = 130   # keep in sync with _ctrl height above
+_vol_dn_lbl = tk.Label(
+    _ctrl, text=" − ",
+    font=("Helvetica", 30, "bold"),
+    fg="white", bg="#1c1c1c",
+    padx=14, pady=10,
+)
+_vol_dn_lbl.pack(side="right", padx=2)
+
+# thin separator line above bar
+_sep = tk.Frame(root, bg="#444444", height=1)
 
 
 def _show_ctrl():
-    _ctrl.place(x=0, y=0, width=SW, height=CTRL_H)  # explicit pixels, no ambiguity
+    _sep.place(x=0, y=SH - CTRL_H - 1, width=SW, height=1)
+    _ctrl.place(x=0, y=SH - CTRL_H, width=SW, height=CTRL_H)
     _ctrl.lift()
+    _sep.lift()
     _reset_hide()
 
 def _hide_ctrl():
     _ctrl.place_forget()
+    _sep.place_forget()
     _hide_id[0] = None
 
 def _reset_hide():
     if _hide_id[0]:
         root.after_cancel(_hide_id[0])
-    _hide_id[0] = root.after(6000, _hide_ctrl)   # 6 s to interact
+    _hide_id[0] = root.after(5000, _hide_ctrl)
 
 def _keep_ctrl_on_top():
-    """Re-lift controls every 300 ms — no fullscreen toggle (that fights stacking)."""
     if _proc[0] is not None:
         if _ctrl.winfo_ismapped():
             _ctrl.lift()
+            _sep.lift()
         root.after(300, _keep_ctrl_on_top)
 
 
@@ -149,9 +206,15 @@ def play_show(glob_path):
     if not files:
         return
     os.system("pkill -9 -f mpv 2>/dev/null; pkill -9 -f cvlc 2>/dev/null; pkill -9 -f vlc 2>/dev/null")
+    os.path.exists(_IPC) and os.remove(_IPC)
+    _paused[0] = False
+    try:
+        _play_lbl.config(text="⏸")
+    except Exception:
+        pass
     main_frame.pack_forget()
     playing_frame.pack(fill="both", expand=True)
-    root.attributes("-fullscreen", True)   # assert once; _keep_ctrl_on_top won't touch it
+    root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
 
@@ -163,23 +226,24 @@ def play_show(glob_path):
         [
             "mpv",
             f"--wid={xid}",
-            "--vo=x11",          # normal X11 render — stays below Tkinter ctrl overlay
-            "--hwdec=auto",      # let Pi use hardware decode (VideoCore/V4L2)
+            "--vo=x11",
+            "--hwdec=auto",
             "--loop-playlist=inf",
             "--no-osd-bar",
             "--really-quiet",
             "--no-terminal",
+            f"--input-ipc-server={_IPC}",
         ] + files,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         env=env,
     )
-    root.after(400, _keep_ctrl_on_top)
+    root.after(300, _keep_ctrl_on_top)
 
 
 def stop_show():
     if _proc[0]:
         try:
-            _proc[0].kill()          # SIGKILL — guarantees audio stops
+            _proc[0].kill()
             _proc[0].wait(timeout=2)
         except Exception:
             pass
@@ -196,8 +260,7 @@ def stop_show():
 main_frame = tk.Frame(root, bg="black")
 main_frame.pack(fill="both", expand=True)
 
-
-_cover_photos = [None, None]   # module-level refs so GC never drops them
+_cover_photos = [None, None]
 
 def _make_card(parent, show, idx):
     card = tk.Frame(parent, bg="black")
@@ -216,7 +279,7 @@ def _make_card(parent, show, idx):
         try:
             img = Image.open(cover_path).resize((w, h), Image.LANCZOS)
             ph = ImageTk.PhotoImage(img)
-            _cover_photos[idx] = ph          # keep reference
+            _cover_photos[idx] = ph
             img_lbl.config(image=ph)
         except Exception:
             card.config(bg="#1c1c1c")
@@ -226,7 +289,7 @@ def _make_card(parent, show, idx):
             _load(e.width, e.height)
 
     card.bind("<Configure>", _resize)
-    card._load = _load                       # expose for forced reload
+    card._load = _load
     return card
 
 
@@ -252,31 +315,35 @@ root.after(300, _reload_covers)
 def _tap(event):
     sx = event.x_root - root.winfo_rootx()
     sy = event.y_root - root.winfo_rooty()
-    Wr = root.winfo_width()
 
-    # ── MENU MODE ──
+    # ── MENU ──
     if _proc[0] is None:
-        idx = min(int(sx / Wr * len(SHOWS)), len(SHOWS) - 1)
+        idx = min(int(sx / SW * len(SHOWS)), len(SHOWS) - 1)
         play_show(SHOWS[idx]["glob"])
         return
 
-    # ── PLAYING MODE — controls hidden → show them ──
+    # ── PLAYING — bar hidden → show it ──
     if not _ctrl.winfo_ismapped():
         _show_ctrl()
         return
 
-    # ── PLAYING MODE — controls visible → any touch resets the hide timer ──
+    # ── PLAYING — bar visible — any touch keeps it alive ──
     _reset_hide()
 
-    if sy > CTRL_H:
-        return   # tapped below bar — timer reset is all we do
+    if sy < SH - CTRL_H:
+        return   # tapped above bar — just reset timer
 
-    if sx < Wr * 0.38:
+    # tapped within the bar — route by x position
+    if sx > SW * 0.88:           # ✕  exit  (rightmost ~12%)
         stop_show()
-    elif sx > Wr * 0.82:
+    elif sx > SW * 0.72:         # +  vol up
         _set_vol(_vol[0] + 10)
-    elif sx > Wr * 0.62:
+    elif sx > SW * 0.55:         # −  vol down
         _set_vol(_vol[0] - 10)
+    elif sx > SW * 0.22:         # ⏭  next episode
+        _next_ep()
+    else:                        # ⏸  play/pause
+        _toggle_pause()
 
 
 root.bind_all("<Button-1>", _tap)
