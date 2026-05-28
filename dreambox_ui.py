@@ -134,11 +134,12 @@ def _reset_hide():
     _hide_id[0] = root.after(4000, _hide_ctrl)
 
 def _keep_ctrl_on_top():
-    """Re-lift controls every 250 ms so VLC's X11 sub-window can't cover them."""
+    """Every 400 ms: re-assert fullscreen (hides taskbar) and re-lift controls."""
     if _proc[0] is not None:
+        root.attributes("-fullscreen", True)
         if _ctrl.winfo_ismapped():
             _ctrl.lift()
-        root.after(250, _keep_ctrl_on_top)
+        root.after(400, _keep_ctrl_on_top)
 
 
 # ── PLAYBACK ──────────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ def play_show(glob_path):
     files = sorted(glob_module.glob(os.path.expanduser(glob_path)))
     if not files:
         return
-    os.system("pkill -f cvlc; pkill -f vlc")
+    os.system("pkill -9 -f mpv 2>/dev/null; pkill -9 -f cvlc 2>/dev/null; pkill -9 -f vlc 2>/dev/null")
     main_frame.pack_forget()
     playing_frame.pack(fill="both", expand=True)
     root.update()
@@ -158,13 +159,17 @@ def play_show(glob_path):
     env["DISPLAY"] = ":0"
     _proc[0] = subprocess.Popen(
         [
-            "cvlc", "--no-osd", "--no-video-title-show", "--quiet", "--loop",
-            "--vout=x11", f"--drawable-xid={xid}",
+            "mpv",
+            f"--wid={xid}",
+            "--loop-playlist=inf",
+            "--no-osd-bar",
+            "--really-quiet",
+            "--no-terminal",
         ] + files,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         env=env,
     )
-    root.after(250, _keep_ctrl_on_top)
+    root.after(400, _keep_ctrl_on_top)
 
 
 def stop_show():
@@ -175,7 +180,7 @@ def stop_show():
         except Exception:
             pass
         _proc[0] = None
-    os.system("pkill -9 -f cvlc 2>/dev/null; pkill -9 -f vlc 2>/dev/null")
+    os.system("pkill -9 -f mpv 2>/dev/null; pkill -9 -f cvlc 2>/dev/null; pkill -9 -f vlc 2>/dev/null")
     _hide_ctrl()
     playing_frame.pack_forget()
     main_frame.pack(fill="both", expand=True)
