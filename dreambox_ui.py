@@ -161,6 +161,8 @@ def play_show(glob_path):
         [
             "mpv",
             f"--wid={xid}",
+            "--vo=xv",           # X Video (hardware-accelerated, no libplacebo crash)
+            "--hwdec=no",        # software decode — avoids GPU assertion on Pi
             "--loop-playlist=inf",
             "--no-osd-bar",
             "--really-quiet",
