@@ -83,8 +83,8 @@ _hide_id = [None]
 # ── PLAYING FRAME ─────────────────────────────────────────────────────────────
 playing_frame = tk.Frame(root, bg="black")
 
-# Controls bar — shown on tap, auto-hides after 4 s
-_ctrl = tk.Frame(playing_frame, bg="#111111", height=130)
+# Controls bar — child of ROOT so it floats above mpv's sub-window
+_ctrl = tk.Frame(root, bg="#111111", height=130)
 
 # Stop button (left)
 _stop_lbl = tk.Label(
