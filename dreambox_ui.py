@@ -135,10 +135,6 @@ BG  = "#1a1a1a"
 BTN = "#2a2a2a"
 RED = "#992222"
 
-# Black backing strip — covers any system panel during playback,
-# always present while video plays, invisible on menu
-_backing = tk.Frame(root, bg="black")
-
 _overlay = tk.Frame(root, bg=BG, highlightbackground="#555555",
                     highlightthickness=2)
 
@@ -222,7 +218,6 @@ def _show_overlay():
     _cancel_slide()
     if _hide_id[0]:
         root.after_cancel(_hide_id[0])
-    _backing.place(x=OX, y=OY, width=OW, height=OH)
     _overlay.place(x=OX, y=SH, width=OW, height=OH)
     _overlay.lift()
     _do_slide_in(SH)
@@ -266,7 +261,6 @@ def _hide_overlay():
         root.after_cancel(_hide_id[0])
         _hide_id[0] = None
     _overlay.place_forget()
-    _backing.place_forget()
     if _prog_id[0]:
         root.after_cancel(_prog_id[0])
         _prog_id[0] = None
@@ -326,6 +320,8 @@ def play_show(idx):
     if not files:
         return
     os.system("pkill -9 -f mpv 2>/dev/null; true")
+    # hide the Wayland panel so it can't bleed through XWayland
+    os.system("pkill -f wf-panel-pi 2>/dev/null; pkill -f 'lwrespawn.*wf-panel' 2>/dev/null; true")
     if os.path.exists(_IPC):
         os.remove(_IPC)
     _paused[0] = False
@@ -336,7 +332,6 @@ def play_show(idx):
     root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
-    _backing.place(x=OX, y=OY, width=OW, height=OH)
     _show_overlay()   # show controls immediately on play
 
     xid = playing_frame.winfo_id()
@@ -362,6 +357,9 @@ def stop_show():
             pass
         _proc[0] = None
     os.system("pkill -9 -f mpv 2>/dev/null; true")
+    # restore the Wayland panel
+    subprocess.Popen(["/bin/sh", "/usr/bin/lwrespawn", "/usr/bin/wf-panel-pi"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     playing_frame.pack_forget()
     main_frame.pack(fill="both", expand=True)
     leds_full()
