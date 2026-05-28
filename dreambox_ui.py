@@ -84,39 +84,41 @@ _hide_id = [None]
 playing_frame = tk.Frame(root, bg="black")
 
 # Controls bar — shown on tap, auto-hides after 4 s
-_ctrl = tk.Frame(playing_frame, bg="#111111", height=90)
+_ctrl = tk.Frame(playing_frame, bg="#111111", height=130)
 
 # Stop button (left)
 _stop_lbl = tk.Label(
     _ctrl, text="  ✕  STOP  ",
-    font=("Helvetica", 24, "bold"),
+    font=("Helvetica", 32, "bold"),
     fg="white", bg="#cc2222",
-    padx=10, pady=14,
+    padx=16, pady=20,
 )
-_stop_lbl.pack(side="left", padx=14, pady=10)
+_stop_lbl.pack(side="left", padx=16, pady=12)
 
 # Volume controls (right side: − VOL% +)
 _vol_up = tk.Label(
     _ctrl, text="  +  ",
-    font=("Helvetica", 30, "bold"),
+    font=("Helvetica", 40, "bold"),
     fg="white", bg="#2a6a2a",
-    padx=12, pady=14,
+    padx=18, pady=20,
 )
 _vol_lbl = tk.Label(
     _ctrl, text=f"{_vol[0]}%",
-    font=("Helvetica", 22),
+    font=("Helvetica", 28),
     fg="white", bg="#111111",
     width=5,
 )
 _vol_dn = tk.Label(
     _ctrl, text="  −  ",
-    font=("Helvetica", 30, "bold"),
+    font=("Helvetica", 40, "bold"),
     fg="white", bg="#6a2a2a",
-    padx=12, pady=14,
+    padx=18, pady=20,
 )
-_vol_up.pack(side="right", padx=(0, 14), pady=10)
-_vol_lbl.pack(side="right", pady=10)
-_vol_dn.pack(side="right", pady=10)
+_vol_up.pack(side="right", padx=(0, 16), pady=12)
+_vol_lbl.pack(side="right", pady=12)
+_vol_dn.pack(side="right", pady=12)
+
+CTRL_H = 130   # keep in sync with _ctrl height above
 
 
 def _show_ctrl():
@@ -131,7 +133,7 @@ def _hide_ctrl():
 def _reset_hide():
     if _hide_id[0]:
         root.after_cancel(_hide_id[0])
-    _hide_id[0] = root.after(4000, _hide_ctrl)
+    _hide_id[0] = root.after(3500, _hide_ctrl)
 
 def _keep_ctrl_on_top():
     """Every 400 ms: re-assert fullscreen (hides taskbar) and re-lift controls."""
@@ -161,8 +163,8 @@ def play_show(glob_path):
         [
             "mpv",
             f"--wid={xid}",
-            "--vo=xv",           # X Video (hardware-accelerated, no libplacebo crash)
-            "--hwdec=no",        # software decode — avoids GPU assertion on Pi
+            "--vo=x11",          # normal X11 render — stays below Tkinter ctrl overlay
+            "--hwdec=auto",      # let Pi use hardware decode (VideoCore/V4L2)
             "--loop-playlist=inf",
             "--no-osd-bar",
             "--really-quiet",
@@ -263,22 +265,18 @@ def _tap(event):
         _show_ctrl()
         return
 
-    # ── PLAYING MODE — controls visible → route tap ──
-    if sy > 90:
-        # Tapped below controls bar → just reset hide timer
-        _reset_hide()
-        return
+    # ── PLAYING MODE — controls visible → any touch resets the hide timer ──
+    _reset_hide()
+
+    if sy > CTRL_H:
+        return   # tapped below bar — timer reset is all we do
 
     if sx < Wr * 0.38:
         stop_show()
     elif sx > Wr * 0.82:
         _set_vol(_vol[0] + 10)
-        _reset_hide()
     elif sx > Wr * 0.62:
         _set_vol(_vol[0] - 10)
-        _reset_hide()
-    else:
-        _reset_hide()
 
 
 root.bind_all("<Button-1>", _tap)
