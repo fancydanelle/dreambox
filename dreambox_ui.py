@@ -56,6 +56,7 @@ def _set_vol(delta):
     _vol[0] = max(0, min(100, _vol[0] + delta))
     os.system(f"wpctl set-volume @DEFAULT_AUDIO_SINK@ {_vol[0]}%")
     _vol_lbl.config(text=f"{_vol[0]}%")
+    _reset_hide()
 
 # ── MPV IPC ──────────────────────────────────────────────────────────────────
 _IPC    = "/tmp/dreambox_mpv.sock"
@@ -101,11 +102,13 @@ def _toggle_pause():
     _paused[0] = not _paused[0]
     _mpv_cmd("cycle", "pause")
     _play_btn.config(text="  ▶  " if _paused[0] else "  ⏸  ")
+    _reset_hide()
 
 def _next_ep():
     _paused[0] = False
     _play_btn.config(text="  ⏸  ")
     _mpv_cmd("playlist-next", "force")
+    _reset_hide()
 
 # ── ROOT WINDOW ───────────────────────────────────────────────────────────────
 SW, SH = 800, 480
@@ -119,8 +122,10 @@ root.lift()
 root.focus_force()
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
-_proc    = [None]
-_prog_id = [None]
+_proc     = [None]
+_prog_id  = [None]
+_hide_id  = [None]
+_slide_id = [None]
 
 # ── OVERLAY — always a child of root so it stacks above playing_frame ────────
 # Sits at bottom strip so it doesn't cover most of the video
@@ -196,13 +201,65 @@ _time_lbl = tk.Label(_row2, text="", font=("Helvetica", 12),
 _time_lbl.pack(side="right", padx=(10, 0))
 
 
-# ── OVERLAY SHOW/HIDE ─────────────────────────────────────────────────────────
+# ── OVERLAY SLIDE ANIMATION ───────────────────────────────────────────────────
+_STEPS = 12   # frames for slide
+_FRAME = 18   # ms per frame → ~215ms total
+
+def _cancel_slide():
+    if _slide_id[0]:
+        root.after_cancel(_slide_id[0])
+        _slide_id[0] = None
+
+def _reset_hide():
+    if _hide_id[0]:
+        root.after_cancel(_hide_id[0])
+    _hide_id[0] = root.after(5000, _slide_out)
+
 def _show_overlay():
-    _overlay.place(x=OX, y=OY, width=OW, height=OH)
+    _cancel_slide()
+    if _hide_id[0]:
+        root.after_cancel(_hide_id[0])
+    _overlay.place(x=OX, y=SH, width=OW, height=OH)
     _overlay.lift()
+    _do_slide_in(SH)
     _start_progress()
+    _reset_hide()
+
+def _do_slide_in(cur_y):
+    step = OH // _STEPS
+    next_y = cur_y - step
+    if next_y <= OY:
+        _overlay.place(x=OX, y=OY, width=OW, height=OH)
+        _overlay.lift()
+        _slide_id[0] = None
+        return
+    _overlay.place(x=OX, y=next_y, width=OW, height=OH)
+    _overlay.lift()
+    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_in(next_y))
+
+def _slide_out():
+    _hide_id[0] = None
+    _cancel_slide()
+    _do_slide_out(OY)
+
+def _do_slide_out(cur_y):
+    step = OH // _STEPS
+    next_y = cur_y + step
+    if next_y >= SH:
+        _overlay.place_forget()
+        if _prog_id[0]:
+            root.after_cancel(_prog_id[0])
+            _prog_id[0] = None
+        _slide_id[0] = None
+        return
+    _overlay.place(x=OX, y=next_y, width=OW, height=OH)
+    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_out(next_y))
 
 def _hide_overlay():
+    _cancel_slide()
+    if _hide_id[0]:
+        root.after_cancel(_hide_id[0])
+        _hide_id[0] = None
     _overlay.place_forget()
     if _prog_id[0]:
         root.after_cancel(_prog_id[0])
@@ -246,9 +303,11 @@ def _on_tap(event):
         play_show(idx)
         return
 
-    # playing — show overlay if hidden, keep it up if already visible
+    # playing — show overlay if hidden, or reset the hide timer if visible
     if not _overlay.winfo_ismapped():
         _show_overlay()
+    else:
+        _reset_hide()
 
 
 root.bind_all("<Button-1>", _on_tap)
