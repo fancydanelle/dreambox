@@ -128,13 +128,16 @@ _hide_id  = [None]
 _slide_id = [None]
 
 # ── OVERLAY — always a child of root so it stacks above playing_frame ────────
-# Sits at bottom strip so it doesn't cover most of the video
 OW, OH = 800, 120
 OX, OY = 0, SH - OH   # bottom strip
 
 BG  = "#1a1a1a"
 BTN = "#2a2a2a"
 RED = "#992222"
+
+# Black backing strip — covers any system panel during playback,
+# always present while video plays, invisible on menu
+_backing = tk.Frame(root, bg="black")
 
 _overlay = tk.Frame(root, bg=BG, highlightbackground="#555555",
                     highlightthickness=2)
@@ -219,6 +222,7 @@ def _show_overlay():
     _cancel_slide()
     if _hide_id[0]:
         root.after_cancel(_hide_id[0])
+    _backing.place(x=OX, y=OY, width=OW, height=OH)
     _overlay.place(x=OX, y=SH, width=OW, height=OH)
     _overlay.lift()
     _do_slide_in(SH)
@@ -247,6 +251,7 @@ def _do_slide_out(cur_y):
     next_y = cur_y + step
     if next_y >= SH:
         _overlay.place_forget()
+        # backing strip stays — keeps system panel hidden while video plays
         if _prog_id[0]:
             root.after_cancel(_prog_id[0])
             _prog_id[0] = None
@@ -261,6 +266,7 @@ def _hide_overlay():
         root.after_cancel(_hide_id[0])
         _hide_id[0] = None
     _overlay.place_forget()
+    _backing.place_forget()
     if _prog_id[0]:
         root.after_cancel(_prog_id[0])
         _prog_id[0] = None
@@ -330,6 +336,7 @@ def play_show(idx):
     root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
+    _backing.place(x=OX, y=OY, width=OW, height=OH)
     _show_overlay()   # show controls immediately on play
 
     xid = playing_frame.winfo_id()
