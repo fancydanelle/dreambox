@@ -122,7 +122,7 @@ CTRL_H = 130   # keep in sync with _ctrl height above
 
 
 def _show_ctrl():
-    _ctrl.place(x=0, y=0, relwidth=1)
+    _ctrl.place(x=0, y=0, width=SW, height=CTRL_H)  # explicit pixels, no ambiguity
     _ctrl.lift()
     _reset_hide()
 
@@ -133,15 +133,14 @@ def _hide_ctrl():
 def _reset_hide():
     if _hide_id[0]:
         root.after_cancel(_hide_id[0])
-    _hide_id[0] = root.after(3500, _hide_ctrl)
+    _hide_id[0] = root.after(6000, _hide_ctrl)   # 6 s to interact
 
 def _keep_ctrl_on_top():
-    """Every 400 ms: re-assert fullscreen (hides taskbar) and re-lift controls."""
+    """Re-lift controls every 300 ms — no fullscreen toggle (that fights stacking)."""
     if _proc[0] is not None:
-        root.attributes("-fullscreen", True)
         if _ctrl.winfo_ismapped():
             _ctrl.lift()
-        root.after(400, _keep_ctrl_on_top)
+        root.after(300, _keep_ctrl_on_top)
 
 
 # ── PLAYBACK ──────────────────────────────────────────────────────────────────
@@ -152,6 +151,7 @@ def play_show(glob_path):
     os.system("pkill -9 -f mpv 2>/dev/null; pkill -9 -f cvlc 2>/dev/null; pkill -9 -f vlc 2>/dev/null")
     main_frame.pack_forget()
     playing_frame.pack(fill="both", expand=True)
+    root.attributes("-fullscreen", True)   # assert once; _keep_ctrl_on_top won't touch it
     root.update()
     leds_dim()
 
