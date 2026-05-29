@@ -97,7 +97,6 @@ root.focus_force()
 # ── STATE ─────────────────────────────────────────────────────────────────────
 _proc      = [None]
 _ctrl_hide = [None]
-_exit_hide = [None]
 
 BG  = "#1a1a1a"
 BTN = "#2a2a2a"
@@ -114,6 +113,10 @@ _row1.pack(fill="x", padx=10, pady=(6, 2))
 _title_lbl = tk.Label(_row1, text="", font=("Helvetica", 13, "bold"),
                        fg="white", bg=BG, anchor="w")
 _title_lbl.pack(side="left", fill="x", expand=True)
+tk.Button(_row1, text="  ✕  ", font=("Helvetica", 13, "bold"),
+          fg="white", bg=RED, activebackground="#cc3333",
+          activeforeground="white", relief="flat", bd=0,
+          command=lambda: stop_show()).pack(side="right")
 tk.Frame(_ctrl, bg="#444444", height=1).pack(fill="x")
 
 _row2 = tk.Frame(_ctrl, bg=BG)
@@ -162,36 +165,13 @@ def _ctrl_hide_now():
     _ctrl.place_forget()
 
 
-# ── EXIT BUTTON — appears on any touch during playback ───────────────────────
-EW, EH = 240, 90
-EX = (SW - EW) // 2
-EY = (SH - EH) // 2
-
-_exit_frame = tk.Frame(root, bg=RED,
-                       highlightbackground="#cc4444", highlightthickness=2)
-tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 24, "bold"),
-          fg="white", bg=RED, activebackground="#cc3333",
-          activeforeground="white", relief="flat", bd=0,
-          command=lambda: stop_show()).pack(expand=True, fill="both")
-
-def _show_exit():
-    if _exit_hide[0]:
-        root.after_cancel(_exit_hide[0])
-    _exit_frame.place(x=EX, y=EY, width=EW, height=EH)
-    _exit_frame.lift()
-    _exit_hide[0] = root.after(4000, _hide_exit)
-
 def _hide_exit():
-    _exit_hide[0] = None
-    _exit_frame.place_forget()
-
+    _ctrl_hide_now()
 
 def _keep_on_top():
     if _proc[0] is not None:
         if _ctrl.winfo_ismapped():
             _ctrl.lift()
-        if _exit_frame.winfo_ismapped():
-            _exit_frame.lift()
         root.after(200, _keep_on_top)
 
 
@@ -214,7 +194,7 @@ def _touch_watcher():
                     _, _, ev_type, ev_code, ev_value = struct.unpack(_EV_FMT, data)
                     if ev_type == _EV_KEY and ev_code == _BTN_TOUCH and ev_value == 1:
                         if _proc[0] is not None:
-                            root.after(0, _show_exit)
+                            root.after(0, _ctrl_show)
         except Exception:
             time.sleep(1)   # retry on error
 
@@ -273,7 +253,6 @@ def play_show(idx):
 
 def stop_show():
     _ctrl_hide_now()
-    _hide_exit()
     if _proc[0]:
         try:
             _proc[0].kill()
