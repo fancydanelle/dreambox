@@ -56,7 +56,7 @@ def _set_vol(delta):
     _vol[0] = max(0, min(100, _vol[0] + delta))
     os.system(f"wpctl set-volume @DEFAULT_AUDIO_SINK@ {_vol[0]}%")
     _vol_lbl.config(text=f"{_vol[0]}%")
-    _reset_hide()
+    _ctrl_reset_hide()
 
 # ── MPV IPC ──────────────────────────────────────────────────────────────────
 _IPC    = "/tmp/dreambox_mpv.sock"
@@ -102,13 +102,13 @@ def _toggle_pause():
     _paused[0] = not _paused[0]
     _mpv_cmd("cycle", "pause")
     _play_btn.config(text="  ▶  " if _paused[0] else "  ⏸  ")
-    _reset_hide()
+    _ctrl_reset_hide()
 
 def _next_ep():
     _paused[0] = False
     _play_btn.config(text="  ⏸  ")
     _mpv_cmd("playlist-next", "force")
-    _reset_hide()
+    _ctrl_reset_hide()
 
 # ── ROOT WINDOW ───────────────────────────────────────────────────────────────
 SW, SH = 800, 480
@@ -122,65 +122,52 @@ root.lift()
 root.focus_force()
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
-_proc     = [None]
-_prog_id  = [None]
-_hide_id  = [None]
-_slide_id = [None]
-
-# ── OVERLAY — always a child of root so it stacks above playing_frame ────────
-OW, OH = 800, 120
-OX, OY = 0, SH - OH   # bottom strip
+_proc      = [None]
+_prog_id   = [None]
+_ctrl_hide = [None]   # auto-hide timer for control panel
+_slide_id  = [None]
+_exit_hide = [None]   # auto-hide timer for exit button
 
 BG  = "#1a1a1a"
 BTN = "#2a2a2a"
 RED = "#992222"
 
-_overlay = tk.Frame(root, bg=BG, highlightbackground="#555555",
-                    highlightthickness=2)
+# ── CONTROL PANEL — slides up at episode start, auto-hides, never re-shown ───
+OW, OH = 800, 120
+OX, OY = 0, SH - OH
 
-# ── row 1: title + exit ───────────────────────────────────────────────────────
-_row1 = tk.Frame(_overlay, bg=BG)
+_ctrl = tk.Frame(root, bg=BG, highlightbackground="#555555", highlightthickness=2)
+
+_row1 = tk.Frame(_ctrl, bg=BG)
 _row1.pack(fill="x", padx=10, pady=(6, 2))
 
 _title_lbl = tk.Label(_row1, text="", font=("Helvetica", 13, "bold"),
                        fg="white", bg=BG, anchor="w")
 _title_lbl.pack(side="left", fill="x", expand=True)
 
-_exit_btn = tk.Button(_row1, text="  ✕  ", font=("Helvetica", 13, "bold"),
-                      fg="white", bg=RED, activebackground="#cc3333",
-                      activeforeground="white", relief="flat", bd=0,
-                      command=lambda: stop_show())
-_exit_btn.pack(side="right")
+tk.Frame(_ctrl, bg="#444444", height=1).pack(fill="x")
 
-tk.Frame(_overlay, bg="#444444", height=1).pack(fill="x")
-
-# ── row 2: play/pause | next | vol- | vol% | vol+ ────────────────────────────
-_row2 = tk.Frame(_overlay, bg=BG)
+_row2 = tk.Frame(_ctrl, bg=BG)
 _row2.pack(fill="both", expand=True, padx=10, pady=4)
 
 _play_btn = tk.Button(_row2, text="  ⏸  ", font=("Helvetica", 28),
                       fg="white", bg=BTN, activebackground="#444444",
                       activeforeground="white", relief="flat", bd=0,
-                      padx=14, pady=4,
-                      command=_toggle_pause)
+                      padx=14, pady=4, command=_toggle_pause)
 _play_btn.pack(side="left", padx=(0, 6))
 
 _next_btn = tk.Button(_row2, text="  ⏭  ", font=("Helvetica", 28),
                       fg="white", bg=BTN, activebackground="#444444",
                       activeforeground="white", relief="flat", bd=0,
-                      padx=14, pady=4,
-                      command=_next_ep)
+                      padx=14, pady=4, command=_next_ep)
 _next_btn.pack(side="left", padx=(0, 20))
 
-# spacer
 tk.Label(_row2, bg=BG).pack(side="left", expand=True)
 
-# volume
 _vol_dn = tk.Button(_row2, text="  −  ", font=("Helvetica", 24, "bold"),
                     fg="white", bg=BTN, activebackground="#444444",
                     activeforeground="white", relief="flat", bd=0,
-                    padx=10, pady=4,
-                    command=lambda: _set_vol(-10))
+                    padx=10, pady=4, command=lambda: _set_vol(-10))
 _vol_dn.pack(side="left", padx=(0, 4))
 
 _vol_lbl = tk.Label(_row2, text=f"{_vol[0]}%",
@@ -190,54 +177,64 @@ _vol_lbl.pack(side="left")
 _vol_up = tk.Button(_row2, text="  +  ", font=("Helvetica", 24, "bold"),
                     fg="white", bg=BTN, activebackground="#444444",
                     activeforeground="white", relief="flat", bd=0,
-                    padx=10, pady=4,
-                    command=lambda: _set_vol(10))
+                    padx=10, pady=4, command=lambda: _set_vol(10))
 _vol_up.pack(side="left", padx=(4, 0))
 
-# time label
 _time_lbl = tk.Label(_row2, text="", font=("Helvetica", 12),
                      fg="#888888", bg=BG)
 _time_lbl.pack(side="right", padx=(10, 0))
 
 
-# ── OVERLAY SLIDE ANIMATION ───────────────────────────────────────────────────
-_STEPS = 12   # frames for slide
-_FRAME = 18   # ms per frame → ~215ms total
+# ── EXIT BUTTON — shown on any tap during playback ───────────────────────────
+EW, EH = 220, 80
+EX, EY = (SW - EW) // 2, (SH - EH) // 2
+
+_exit_frame = tk.Frame(root, bg=RED, highlightbackground="#cc4444",
+                       highlightthickness=2)
+tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 22, "bold"),
+          fg="white", bg=RED, activebackground="#cc3333",
+          activeforeground="white", relief="flat", bd=0,
+          command=lambda: stop_show()).pack(expand=True, fill="both")
+
+
+# ── CONTROL PANEL SLIDE ANIMATION ────────────────────────────────────────────
+_STEPS = 12
+_FRAME = 18   # ms per step → ~215ms total
 
 def _cancel_slide():
     if _slide_id[0]:
         root.after_cancel(_slide_id[0])
         _slide_id[0] = None
 
-def _reset_hide():
-    if _hide_id[0]:
-        root.after_cancel(_hide_id[0])
-    _hide_id[0] = root.after(5000, _slide_out)
+def _ctrl_reset_hide():
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+    _ctrl_hide[0] = root.after(5000, _ctrl_slide_out)
 
-def _show_overlay():
+def _ctrl_show():
     _cancel_slide()
-    if _hide_id[0]:
-        root.after_cancel(_hide_id[0])
-    _overlay.place(x=OX, y=SH, width=OW, height=OH)
-    _overlay.lift()
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+    _ctrl.place(x=OX, y=SH, width=OW, height=OH)
+    _ctrl.lift()
     _do_slide_in(SH)
     _start_progress()
-    _reset_hide()
+    _ctrl_reset_hide()
 
 def _do_slide_in(cur_y):
     step = OH // _STEPS
     next_y = cur_y - step
     if next_y <= OY:
-        _overlay.place(x=OX, y=OY, width=OW, height=OH)
-        _overlay.lift()
+        _ctrl.place(x=OX, y=OY, width=OW, height=OH)
+        _ctrl.lift()
         _slide_id[0] = None
         return
-    _overlay.place(x=OX, y=next_y, width=OW, height=OH)
-    _overlay.lift()
+    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
+    _ctrl.lift()
     _slide_id[0] = root.after(_FRAME, lambda: _do_slide_in(next_y))
 
-def _slide_out():
-    _hide_id[0] = None
+def _ctrl_slide_out():
+    _ctrl_hide[0] = None
     _cancel_slide()
     _do_slide_out(OY)
 
@@ -245,22 +242,21 @@ def _do_slide_out(cur_y):
     step = OH // _STEPS
     next_y = cur_y + step
     if next_y >= SH:
-        _overlay.place_forget()
-        # backing strip stays — keeps system panel hidden while video plays
+        _ctrl.place_forget()
         if _prog_id[0]:
             root.after_cancel(_prog_id[0])
             _prog_id[0] = None
         _slide_id[0] = None
         return
-    _overlay.place(x=OX, y=next_y, width=OW, height=OH)
+    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
     _slide_id[0] = root.after(_FRAME, lambda: _do_slide_out(next_y))
 
-def _hide_overlay():
+def _ctrl_hide_now():
     _cancel_slide()
-    if _hide_id[0]:
-        root.after_cancel(_hide_id[0])
-        _hide_id[0] = None
-    _overlay.place_forget()
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+        _ctrl_hide[0] = None
+    _ctrl.place_forget()
     if _prog_id[0]:
         root.after_cancel(_prog_id[0])
         _prog_id[0] = None
@@ -271,7 +267,7 @@ def _start_progress():
     _tick_progress()
 
 def _tick_progress():
-    if _proc[0] is None or not _overlay.winfo_ismapped():
+    if _proc[0] is None or not _ctrl.winfo_ismapped():
         return
     pos = _mpv_get("time-pos")
     dur = _mpv_get("duration")
@@ -280,34 +276,50 @@ def _tick_progress():
     _prog_id[0] = root.after(1000, _tick_progress)
 
 
+# ── EXIT BUTTON SHOW / HIDE ───────────────────────────────────────────────────
+def _show_exit():
+    if _exit_hide[0]:
+        root.after_cancel(_exit_hide[0])
+    _exit_frame.place(x=EX, y=EY, width=EW, height=EH)
+    _exit_frame.lift()
+    _exit_hide[0] = root.after(4000, _hide_exit)
+
+def _hide_exit():
+    _exit_frame.place_forget()
+    _exit_hide[0] = None
+
+
 def _keep_on_top():
     if _proc[0] is not None:
-        if _overlay.winfo_ismapped():
-            _overlay.lift()
+        if _ctrl.winfo_ismapped():
+            _ctrl.lift()
+        if _exit_frame.winfo_ismapped():
+            _exit_frame.lift()
         root.after(200, _keep_on_top)
 
 
-# ── TAP: show overlay when screen tapped during playback ─────────────────────
+# ── TAP HANDLER ───────────────────────────────────────────────────────────────
 _last_tap = [0]
 
 def _on_tap(event):
     now = time.time()
-    if now - _last_tap[0] < 0.3:   # debounce double-fire
+    if now - _last_tap[0] < 0.3:
         return
     _last_tap[0] = now
 
     if _proc[0] is None:
-        # menu — pick show by which half was tapped
         sx = event.x_root - root.winfo_rootx()
         idx = 0 if sx < SW // 2 else 1
         play_show(idx)
         return
 
-    # playing — show overlay if hidden, or reset the hide timer if visible
-    if not _overlay.winfo_ismapped():
-        _show_overlay()
-    else:
-        _reset_hide()
+    # If the initial control panel is still up, let its buttons handle clicks
+    if _ctrl.winfo_ismapped():
+        _ctrl_reset_hide()
+        return
+
+    # Otherwise show the exit button (or reset its timer if already showing)
+    _show_exit()
 
 
 root.bind_all("<Button-1>", _on_tap)
@@ -320,7 +332,6 @@ def play_show(idx):
     if not files:
         return
     os.system("pkill -9 -f mpv 2>/dev/null; true")
-    # hide the Wayland panel so it can't bleed through XWayland
     os.system("pkill -f wf-panel-pi 2>/dev/null; pkill -f 'lwrespawn.*wf-panel' 2>/dev/null; true")
     if os.path.exists(_IPC):
         os.remove(_IPC)
@@ -332,7 +343,7 @@ def play_show(idx):
     root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
-    _show_overlay()   # show controls immediately on play
+    _ctrl_show()   # show full controls once at episode start
 
     xid = playing_frame.winfo_id()
     env = os.environ.copy()
@@ -348,7 +359,8 @@ def play_show(idx):
 
 
 def stop_show():
-    _hide_overlay()
+    _ctrl_hide_now()
+    _hide_exit()
     if _proc[0]:
         try:
             _proc[0].kill()
@@ -357,7 +369,6 @@ def stop_show():
             pass
         _proc[0] = None
     os.system("pkill -9 -f mpv 2>/dev/null; true")
-    # restore the Wayland panel
     subprocess.Popen(["/bin/sh", "/usr/bin/lwrespawn", "/usr/bin/wf-panel-pi"],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     playing_frame.pack_forget()
