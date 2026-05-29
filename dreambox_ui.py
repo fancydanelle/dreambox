@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import glob as glob_module
 import socket as _socket
 import subprocess
@@ -36,19 +37,78 @@ SHOWS = [
      "cover": "~/videos/covers/office.jpg"},
 ]
 
+# ── VOLUME ───────────────────────────────────────────────────────────────────
+def _read_vol():
+    try:
+        out = subprocess.check_output(
+            ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+            stderr=subprocess.DEVNULL).decode()
+        m = re.search(r'Volume:\s*([\d.]+)', out)
+        if m:
+            return round(float(m.group(1)) * 100)
+    except Exception:
+        pass
+    return 80
+
+_vol = [_read_vol()]
+
+def _set_vol(delta):
+    _vol[0] = max(0, min(100, _vol[0] + delta))
+    os.system(f"wpctl set-volume @DEFAULT_AUDIO_SINK@ {_vol[0]}%")
+    _vol_lbl.config(text=f"{_vol[0]}%")
+    _ctrl_reset_hide()
+
 # ── MPV IPC ──────────────────────────────────────────────────────────────────
-_IPC = "/tmp/dreambox_mpv.sock"
+_IPC    = "/tmp/dreambox_mpv.sock"
+_paused = [False]
 
 def _mpv_cmd(*args):
     try:
         s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         s.settimeout(0.5)
         s.connect(_IPC)
-        import json
         s.sendall(json.dumps({"command": list(args)}).encode() + b"\n")
         s.close()
     except Exception:
         pass
+
+def _mpv_get(prop):
+    try:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(0.4)
+        s.connect(_IPC)
+        s.sendall(json.dumps({"command": ["get_property", prop]}).encode() + b"\n")
+        data = b""
+        while True:
+            chunk = s.recv(512)
+            if not chunk:
+                break
+            data += chunk
+            if b"\n" in chunk:
+                break
+        s.close()
+        resp = json.loads(data.split(b"\n")[0])
+        if resp.get("error") == "success":
+            return resp.get("data")
+    except Exception:
+        pass
+    return None
+
+def _fmt_time(secs):
+    secs = int(secs or 0)
+    return f"{secs // 60}:{secs % 60:02d}"
+
+def _toggle_pause():
+    _paused[0] = not _paused[0]
+    _mpv_cmd("cycle", "pause")
+    _play_btn.config(text="  ▶  " if _paused[0] else "  ⏸  ")
+    _ctrl_reset_hide()
+
+def _next_ep():
+    _paused[0] = False
+    _play_btn.config(text="  ⏸  ")
+    _mpv_cmd("playlist-next", "force")
+    _ctrl_reset_hide()
 
 # ── ROOT WINDOW ───────────────────────────────────────────────────────────────
 SW, SH = 800, 480
@@ -63,20 +123,160 @@ root.focus_force()
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 _proc      = [None]
-_exit_hide = [None]
+_prog_id   = [None]
+_ctrl_hide = [None]   # auto-hide timer for control panel
+_slide_id  = [None]
+_exit_hide = [None]   # auto-hide timer for exit button
 
-# ── EXIT BUTTON — only shown when user taps during playback ──────────────────
-EW, EH = 240, 90
+BG  = "#1a1a1a"
+BTN = "#2a2a2a"
+RED = "#992222"
+
+# ── CONTROL PANEL — slides up at episode start, auto-hides, never re-shown ───
+OW, OH = 800, 120
+OX, OY = 0, SH - OH
+
+_ctrl = tk.Frame(root, bg=BG, highlightbackground="#555555", highlightthickness=2)
+
+_row1 = tk.Frame(_ctrl, bg=BG)
+_row1.pack(fill="x", padx=10, pady=(6, 2))
+
+_title_lbl = tk.Label(_row1, text="", font=("Helvetica", 13, "bold"),
+                       fg="white", bg=BG, anchor="w")
+_title_lbl.pack(side="left", fill="x", expand=True)
+
+tk.Frame(_ctrl, bg="#444444", height=1).pack(fill="x")
+
+_row2 = tk.Frame(_ctrl, bg=BG)
+_row2.pack(fill="both", expand=True, padx=10, pady=4)
+
+_play_btn = tk.Button(_row2, text="  ⏸  ", font=("Helvetica", 28),
+                      fg="white", bg=BTN, activebackground="#444444",
+                      activeforeground="white", relief="flat", bd=0,
+                      padx=14, pady=4, command=_toggle_pause)
+_play_btn.pack(side="left", padx=(0, 6))
+
+_next_btn = tk.Button(_row2, text="  ⏭  ", font=("Helvetica", 28),
+                      fg="white", bg=BTN, activebackground="#444444",
+                      activeforeground="white", relief="flat", bd=0,
+                      padx=14, pady=4, command=_next_ep)
+_next_btn.pack(side="left", padx=(0, 20))
+
+tk.Label(_row2, bg=BG).pack(side="left", expand=True)
+
+_vol_dn = tk.Button(_row2, text="  −  ", font=("Helvetica", 24, "bold"),
+                    fg="white", bg=BTN, activebackground="#444444",
+                    activeforeground="white", relief="flat", bd=0,
+                    padx=10, pady=4, command=lambda: _set_vol(-10))
+_vol_dn.pack(side="left", padx=(0, 4))
+
+_vol_lbl = tk.Label(_row2, text=f"{_vol[0]}%",
+                    font=("Helvetica", 16), fg="#aaaaaa", bg=BG, width=5)
+_vol_lbl.pack(side="left")
+
+_vol_up = tk.Button(_row2, text="  +  ", font=("Helvetica", 24, "bold"),
+                    fg="white", bg=BTN, activebackground="#444444",
+                    activeforeground="white", relief="flat", bd=0,
+                    padx=10, pady=4, command=lambda: _set_vol(10))
+_vol_up.pack(side="left", padx=(4, 0))
+
+_time_lbl = tk.Label(_row2, text="", font=("Helvetica", 12),
+                     fg="#888888", bg=BG)
+_time_lbl.pack(side="right", padx=(10, 0))
+
+
+# ── EXIT BUTTON — shown on any tap during playback ───────────────────────────
+EW, EH = 220, 80
 EX, EY = (SW - EW) // 2, (SH - EH) // 2
 
-_exit_frame = tk.Frame(root, bg="#992222",
-                       highlightbackground="#cc4444", highlightthickness=2)
-tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 24, "bold"),
-          fg="white", bg="#992222", activebackground="#cc3333",
+_exit_frame = tk.Frame(root, bg=RED, highlightbackground="#cc4444",
+                       highlightthickness=2)
+tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 22, "bold"),
+          fg="white", bg=RED, activebackground="#cc3333",
           activeforeground="white", relief="flat", bd=0,
           command=lambda: stop_show()).pack(expand=True, fill="both")
 
 
+# ── CONTROL PANEL SLIDE ANIMATION ────────────────────────────────────────────
+_STEPS = 12
+_FRAME = 18   # ms per step → ~215ms total
+
+def _cancel_slide():
+    if _slide_id[0]:
+        root.after_cancel(_slide_id[0])
+        _slide_id[0] = None
+
+def _ctrl_reset_hide():
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+    _ctrl_hide[0] = root.after(5000, _ctrl_slide_out)
+
+def _ctrl_show():
+    _cancel_slide()
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+    _ctrl.place(x=OX, y=SH, width=OW, height=OH)
+    _ctrl.lift()
+    _do_slide_in(SH)
+    _start_progress()
+    _ctrl_reset_hide()
+
+def _do_slide_in(cur_y):
+    step = OH // _STEPS
+    next_y = cur_y - step
+    if next_y <= OY:
+        _ctrl.place(x=OX, y=OY, width=OW, height=OH)
+        _ctrl.lift()
+        _slide_id[0] = None
+        return
+    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
+    _ctrl.lift()
+    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_in(next_y))
+
+def _ctrl_slide_out():
+    _ctrl_hide[0] = None
+    _cancel_slide()
+    _do_slide_out(OY)
+
+def _do_slide_out(cur_y):
+    step = OH // _STEPS
+    next_y = cur_y + step
+    if next_y >= SH:
+        _ctrl.place_forget()
+        if _prog_id[0]:
+            root.after_cancel(_prog_id[0])
+            _prog_id[0] = None
+        _slide_id[0] = None
+        return
+    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
+    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_out(next_y))
+
+def _ctrl_hide_now():
+    _cancel_slide()
+    if _ctrl_hide[0]:
+        root.after_cancel(_ctrl_hide[0])
+        _ctrl_hide[0] = None
+    _ctrl.place_forget()
+    if _prog_id[0]:
+        root.after_cancel(_prog_id[0])
+        _prog_id[0] = None
+
+def _start_progress():
+    if _prog_id[0]:
+        root.after_cancel(_prog_id[0])
+    _tick_progress()
+
+def _tick_progress():
+    if _proc[0] is None or not _ctrl.winfo_ismapped():
+        return
+    pos = _mpv_get("time-pos")
+    dur = _mpv_get("duration")
+    if pos is not None and dur:
+        _time_lbl.config(text=f"{_fmt_time(pos)} / {_fmt_time(dur)}")
+    _prog_id[0] = root.after(1000, _tick_progress)
+
+
+# ── EXIT BUTTON SHOW / HIDE ───────────────────────────────────────────────────
 def _show_exit():
     if _exit_hide[0]:
         root.after_cancel(_exit_hide[0])
@@ -91,6 +291,8 @@ def _hide_exit():
 
 def _keep_on_top():
     if _proc[0] is not None:
+        if _ctrl.winfo_ismapped():
+            _ctrl.lift()
         if _exit_frame.winfo_ismapped():
             _exit_frame.lift()
         root.after(200, _keep_on_top)
@@ -106,13 +308,17 @@ def _on_tap(event):
     _last_tap[0] = now
 
     if _proc[0] is None:
-        # menu — pick show by which half was tapped
         sx = event.x_root - root.winfo_rootx()
         idx = 0 if sx < SW // 2 else 1
         play_show(idx)
         return
 
-    # playing — show exit button (or reset its timer)
+    # If the initial control panel is still up, let its buttons handle clicks
+    if _ctrl.winfo_ismapped():
+        _ctrl_reset_hide()
+        return
+
+    # Otherwise show the exit button (or reset its timer if already showing)
     _show_exit()
 
 
@@ -129,11 +335,15 @@ def play_show(idx):
     os.system("pkill -f wf-panel-pi 2>/dev/null; pkill -f 'lwrespawn.*wf-panel' 2>/dev/null; true")
     if os.path.exists(_IPC):
         os.remove(_IPC)
+    _paused[0] = False
+    _play_btn.config(text="  ⏸  ")
+    _title_lbl.config(text=show["title"])
     main_frame.pack_forget()
     playing_frame.pack(fill="both", expand=True)
     root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
+    _ctrl_show()   # show full controls once at episode start
 
     xid = playing_frame.winfo_id()
     env = os.environ.copy()
@@ -149,6 +359,7 @@ def play_show(idx):
 
 
 def stop_show():
+    _ctrl_hide_now()
     _hide_exit()
     if _proc[0]:
         try:
