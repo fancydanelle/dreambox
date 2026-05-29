@@ -1,6 +1,8 @@
 import os
 import re
 import json
+import struct
+import threading
 import glob as glob_module
 import socket as _socket
 import subprocess
@@ -71,32 +73,6 @@ def _mpv_cmd(*args):
     except Exception:
         pass
 
-def _mpv_get(prop):
-    try:
-        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        s.settimeout(0.4)
-        s.connect(_IPC)
-        s.sendall(json.dumps({"command": ["get_property", prop]}).encode() + b"\n")
-        data = b""
-        while True:
-            chunk = s.recv(512)
-            if not chunk:
-                break
-            data += chunk
-            if b"\n" in chunk:
-                break
-        s.close()
-        resp = json.loads(data.split(b"\n")[0])
-        if resp.get("error") == "success":
-            return resp.get("data")
-    except Exception:
-        pass
-    return None
-
-def _fmt_time(secs):
-    secs = int(secs or 0)
-    return f"{secs // 60}:{secs % 60:02d}"
-
 def _toggle_pause():
     _paused[0] = not _paused[0]
     _mpv_cmd("cycle", "pause")
@@ -127,19 +103,17 @@ BG  = "#1a1a1a"
 BTN = "#2a2a2a"
 RED = "#992222"
 
-# ── CONTROL PANEL — slides up at episode start, auto-hides, never re-shown ───
+# ── CONTROL PANEL — shown once at episode start, auto-hides after 5s ─────────
 OW, OH = 800, 120
-OX, OY = 0, SH - OH
+OX, OY = 0, SH - OH   # bottom strip
 
 _ctrl = tk.Frame(root, bg=BG, highlightbackground="#555555", highlightthickness=2)
 
 _row1 = tk.Frame(_ctrl, bg=BG)
 _row1.pack(fill="x", padx=10, pady=(6, 2))
-
 _title_lbl = tk.Label(_row1, text="", font=("Helvetica", 13, "bold"),
                        fg="white", bg=BG, anchor="w")
 _title_lbl.pack(side="left", fill="x", expand=True)
-
 tk.Frame(_ctrl, bg="#444444", height=1).pack(fill="x")
 
 _row2 = tk.Frame(_ctrl, bg=BG)
@@ -175,24 +149,7 @@ _vol_up = tk.Button(_row2, text="  +  ", font=("Helvetica", 24, "bold"),
                     padx=10, pady=4, command=lambda: _set_vol(10))
 _vol_up.pack(side="left", padx=(4, 0))
 
-_time_lbl = tk.Label(_row2, text="", font=("Helvetica", 12),
-                     fg="#888888", bg=BG)
-_time_lbl.pack(side="right", padx=(10, 0))
 
-
-# ── EXIT BUTTON — shown on any tap during playback ───────────────────────────
-EW, EH = 220, 80
-EX, EY = (SW - EW) // 2, (SH - EH) // 2
-
-_exit_frame = tk.Frame(root, bg=RED, highlightbackground="#cc4444",
-                       highlightthickness=2)
-tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 22, "bold"),
-          fg="white", bg=RED, activebackground="#cc3333",
-          activeforeground="white", relief="flat", bd=0,
-          command=lambda: stop_show()).pack(expand=True, fill="both")
-
-
-# ── CONTROL PANEL SHOW / HIDE ────────────────────────────────────────────────
 def _ctrl_show():
     if _ctrl_hide[0]:
         root.after_cancel(_ctrl_hide[0])
@@ -201,13 +158,22 @@ def _ctrl_show():
     _ctrl_hide[0] = root.after(5000, _ctrl_hide_now)
 
 def _ctrl_hide_now():
-    if _ctrl_hide[0]:
-        root.after_cancel(_ctrl_hide[0])
-        _ctrl_hide[0] = None
+    _ctrl_hide[0] = None
     _ctrl.place_forget()
 
 
-# ── EXIT BUTTON SHOW / HIDE ───────────────────────────────────────────────────
+# ── EXIT BUTTON — appears on any touch during playback ───────────────────────
+EW, EH = 240, 90
+EX = (SW - EW) // 2
+EY = (SH - EH) // 2
+
+_exit_frame = tk.Frame(root, bg=RED,
+                       highlightbackground="#cc4444", highlightthickness=2)
+tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 24, "bold"),
+          fg="white", bg=RED, activebackground="#cc3333",
+          activeforeground="white", relief="flat", bd=0,
+          command=lambda: stop_show()).pack(expand=True, fill="both")
+
 def _show_exit():
     if _exit_hide[0]:
         root.after_cancel(_exit_hide[0])
@@ -216,8 +182,8 @@ def _show_exit():
     _exit_hide[0] = root.after(4000, _hide_exit)
 
 def _hide_exit():
-    _exit_frame.place_forget()
     _exit_hide[0] = None
+    _exit_frame.place_forget()
 
 
 def _keep_on_top():
@@ -229,26 +195,47 @@ def _keep_on_top():
         root.after(200, _keep_on_top)
 
 
-# ── TAP HANDLER ───────────────────────────────────────────────────────────────
+# ── TOUCH WATCHER — reads raw events, bypasses X11/mpv entirely ──────────────
+# On 64-bit Pi: struct input_event = { long long, long long, ushort, ushort, int }
+_EV_FMT  = 'qqHHi'
+_EV_SIZE = struct.calcsize(_EV_FMT)   # 24 bytes
+_EV_KEY  = 0x01
+_BTN_TOUCH = 0x14a
+
+def _touch_watcher():
+    dev = '/dev/input/event5'   # ft5x06 DSI touchscreen
+    while True:
+        try:
+            with open(dev, 'rb') as f:
+                while True:
+                    data = f.read(_EV_SIZE)
+                    if len(data) < _EV_SIZE:
+                        break
+                    _, _, ev_type, ev_code, ev_value = struct.unpack(_EV_FMT, data)
+                    if ev_type == _EV_KEY and ev_code == _BTN_TOUCH and ev_value == 1:
+                        if _proc[0] is not None:
+                            root.after(0, _show_exit)
+        except Exception:
+            time.sleep(1)   # retry on error
+
+threading.Thread(target=_touch_watcher, daemon=True).start()
+
+
+# ── MENU TAP — still use bind_all for the main menu (no mpv running) ─────────
 _last_tap = [0]
 
-def _on_tap(event):
+def _on_menu_tap(event):
+    if _proc[0] is not None:
+        return   # playback handled by touch watcher
     now = time.time()
     if now - _last_tap[0] < 0.3:
         return
     _last_tap[0] = now
+    sx = event.x_root - root.winfo_rootx()
+    idx = 0 if sx < SW // 2 else 1
+    play_show(idx)
 
-    if _proc[0] is None:
-        sx = event.x_root - root.winfo_rootx()
-        idx = 0 if sx < SW // 2 else 1
-        play_show(idx)
-        return
-
-    # always show exit button on tap during playback
-    _show_exit()
-
-
-root.bind_all("<Button-1>", _on_tap)
+root.bind_all("<Button-1>", _on_menu_tap)
 
 
 # ── PLAYBACK ──────────────────────────────────────────────────────────────────
@@ -269,7 +256,7 @@ def play_show(idx):
     root.attributes("-fullscreen", True)
     root.update()
     leds_dim()
-    _ctrl_show()   # show full controls once at episode start
+    _ctrl_show()   # show controls once at episode start
 
     xid = playing_frame.winfo_id()
     env = os.environ.copy()
