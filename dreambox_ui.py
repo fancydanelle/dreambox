@@ -351,7 +351,7 @@ def play_show(idx):
     env["DISPLAY"] = ":0"
     _proc[0] = subprocess.Popen(
         ["mpv", f"--wid={xid}", "--vo=x11", "--hwdec=auto",
-         "--loop-playlist=inf", "--no-osd-bar", "--really-quiet",
+         "--loop-playlist=inf", "--osd-level=0", "--really-quiet",
          "--no-terminal", f"--input-ipc-server={_IPC}"] + files,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
     )
