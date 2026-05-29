@@ -56,7 +56,6 @@ def _set_vol(delta):
     _vol[0] = max(0, min(100, _vol[0] + delta))
     os.system(f"wpctl set-volume @DEFAULT_AUDIO_SINK@ {_vol[0]}%")
     _vol_lbl.config(text=f"{_vol[0]}%")
-    _ctrl_reset_hide()
 
 # ── MPV IPC ──────────────────────────────────────────────────────────────────
 _IPC    = "/tmp/dreambox_mpv.sock"
@@ -102,13 +101,11 @@ def _toggle_pause():
     _paused[0] = not _paused[0]
     _mpv_cmd("cycle", "pause")
     _play_btn.config(text="  ▶  " if _paused[0] else "  ⏸  ")
-    _ctrl_reset_hide()
 
 def _next_ep():
     _paused[0] = False
     _play_btn.config(text="  ⏸  ")
     _mpv_cmd("playlist-next", "force")
-    _ctrl_reset_hide()
 
 # ── ROOT WINDOW ───────────────────────────────────────────────────────────────
 SW, SH = 800, 480
@@ -123,10 +120,8 @@ root.focus_force()
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 _proc      = [None]
-_prog_id   = [None]
-_ctrl_hide = [None]   # auto-hide timer for control panel
-_slide_id  = [None]
-_exit_hide = [None]   # auto-hide timer for exit button
+_ctrl_hide = [None]
+_exit_hide = [None]
 
 BG  = "#1a1a1a"
 BTN = "#2a2a2a"
@@ -197,83 +192,19 @@ tk.Button(_exit_frame, text="✕   EXIT", font=("Helvetica", 22, "bold"),
           command=lambda: stop_show()).pack(expand=True, fill="both")
 
 
-# ── CONTROL PANEL SLIDE ANIMATION ────────────────────────────────────────────
-_STEPS = 12
-_FRAME = 18   # ms per step → ~215ms total
-
-def _cancel_slide():
-    if _slide_id[0]:
-        root.after_cancel(_slide_id[0])
-        _slide_id[0] = None
-
-def _ctrl_reset_hide():
-    if _ctrl_hide[0]:
-        root.after_cancel(_ctrl_hide[0])
-    _ctrl_hide[0] = root.after(5000, _ctrl_slide_out)
-
+# ── CONTROL PANEL SHOW / HIDE ────────────────────────────────────────────────
 def _ctrl_show():
-    _cancel_slide()
     if _ctrl_hide[0]:
         root.after_cancel(_ctrl_hide[0])
-    _ctrl.place(x=OX, y=SH, width=OW, height=OH)
+    _ctrl.place(x=OX, y=OY, width=OW, height=OH)
     _ctrl.lift()
-    _do_slide_in(SH)
-    _start_progress()
-    _ctrl_reset_hide()
-
-def _do_slide_in(cur_y):
-    step = OH // _STEPS
-    next_y = cur_y - step
-    if next_y <= OY:
-        _ctrl.place(x=OX, y=OY, width=OW, height=OH)
-        _ctrl.lift()
-        _slide_id[0] = None
-        return
-    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
-    _ctrl.lift()
-    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_in(next_y))
-
-def _ctrl_slide_out():
-    _ctrl_hide[0] = None
-    _cancel_slide()
-    _do_slide_out(OY)
-
-def _do_slide_out(cur_y):
-    step = OH // _STEPS
-    next_y = cur_y + step
-    if next_y >= SH:
-        _ctrl.place_forget()
-        if _prog_id[0]:
-            root.after_cancel(_prog_id[0])
-            _prog_id[0] = None
-        _slide_id[0] = None
-        return
-    _ctrl.place(x=OX, y=next_y, width=OW, height=OH)
-    _slide_id[0] = root.after(_FRAME, lambda: _do_slide_out(next_y))
+    _ctrl_hide[0] = root.after(5000, _ctrl_hide_now)
 
 def _ctrl_hide_now():
-    _cancel_slide()
     if _ctrl_hide[0]:
         root.after_cancel(_ctrl_hide[0])
         _ctrl_hide[0] = None
     _ctrl.place_forget()
-    if _prog_id[0]:
-        root.after_cancel(_prog_id[0])
-        _prog_id[0] = None
-
-def _start_progress():
-    if _prog_id[0]:
-        root.after_cancel(_prog_id[0])
-    _tick_progress()
-
-def _tick_progress():
-    if _proc[0] is None or not _ctrl.winfo_ismapped():
-        return
-    pos = _mpv_get("time-pos")
-    dur = _mpv_get("duration")
-    if pos is not None and dur:
-        _time_lbl.config(text=f"{_fmt_time(pos)} / {_fmt_time(dur)}")
-    _prog_id[0] = root.after(1000, _tick_progress)
 
 
 # ── EXIT BUTTON SHOW / HIDE ───────────────────────────────────────────────────
@@ -313,12 +244,7 @@ def _on_tap(event):
         play_show(idx)
         return
 
-    # If the initial control panel is still up, let its buttons handle clicks
-    if _ctrl.winfo_ismapped():
-        _ctrl_reset_hide()
-        return
-
-    # Otherwise show the exit button (or reset its timer if already showing)
+    # always show exit button on tap during playback
     _show_exit()
 
 
