@@ -31,6 +31,13 @@ def leds_dim():
 
 time.sleep(2)
 
+# Ensure the OLED starfield is running
+subprocess.Popen(
+    ["bash", "-c",
+     "pgrep -f oled_auto || nohup python3 /home/fancydanelle/oled_auto.py > /tmp/oled.log 2>&1 &"],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+)
+
 # ── SHOWS ────────────────────────────────────────────────────────────────────
 SHOWS = [
     {"title": "Wonderfalls",  "glob": "~/videos/S01E*.mp4",
